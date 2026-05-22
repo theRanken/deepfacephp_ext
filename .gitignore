@@ -2,6 +2,10 @@
 /target/
 **/*.rs.bk
 
+# Local toolchain/runtime cache
+/vendor/onnxruntime/
+/vendor/**/*.zip
+
 # IDEs
 .vscode/
 .idea/
