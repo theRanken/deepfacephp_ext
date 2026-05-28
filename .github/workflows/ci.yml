@@ -8,8 +8,12 @@ on:
   pull_request:
 
 jobs:
-  windows-build-and-smoke:
-    runs-on: windows-latest
+  build-and-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
       - name: Checkout
@@ -24,7 +28,22 @@ jobs:
           php-version: "8.3"
           coverage: none
 
-      - name: Run build and smoke
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y php-dev pkg-config clang
+
+      - name: Run Windows build and smoke
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           ./scripts/dev-env.ps1
+
+      - name: Run Linux build and smoke
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          chmod +x ./scripts/dev-env.sh
+          ./scripts/dev-env.sh

@@ -8,7 +8,7 @@ function fail(string $message, int $code = 1): never
 }
 
 if (!function_exists('deepface_analyze') || !function_exists('deepface_compare')) {
-    fail('Extension functions are not available. Ensure the extension DLL is loaded.');
+    fail('Extension functions are not available. Ensure the extension module is loaded.');
 }
 
 $ortDylibPath = getenv('ORT_DYLIB_PATH');
@@ -29,17 +29,44 @@ try {
     }
 }
 
-// 2) Compare path should fail quickly for a missing model path and never hang.
-$missingModel = __DIR__ . '/../missing_model.onnx';
-$start = microtime(true);
-try {
-    deepface_compare('a', 'b', $missingModel, 0.5);
-    fail('Expected missing model error was not thrown.');
-} catch (Throwable $e) {
-    $elapsed = microtime(true) - $start;
-    if ($elapsed > 5.0) {
-        fail("deepface_compare took too long before failing ({$elapsed}s).");
+// 2) If detector model env is not provided, compare should fail quickly on detector config.
+$detectorEnv = getenv('DEEPFACE_DETECTOR_MODEL_PATH');
+if ($detectorEnv === false || trim($detectorEnv) === '') {
+    $start = microtime(true);
+    try {
+        deepface_compare('a', 'b', 'missing.onnx', 0.5);
+        fail('Expected missing detector config error was not thrown.');
+    } catch (Throwable $e) {
+        $elapsed = microtime(true) - $start;
+        if ($elapsed > 5.0) {
+            fail("deepface_compare took too long before detector-config failure ({$elapsed}s).");
+        }
+        if (stripos($e->getMessage(), 'DEEPFACE_DETECTOR_MODEL_PATH') === false && stripos($e->getMessage(), 'detector') === false) {
+            fail("Unexpected detector-config error: {$e->getMessage()}");
+        }
+        echo "SMOKE_OK: compare failed fast for detector config in " . round($elapsed, 3) . "s\n";
+        echo "SMOKE_OK: error={$e->getMessage()}\n";
     }
-    echo "SMOKE_OK: compare failed fast in " . round($elapsed, 3) . "s\n";
-    echo "SMOKE_OK: error={$e->getMessage()}\n";
+} else {
+    echo "SMOKE_SKIP: DEEPFACE_DETECTOR_MODEL_PATH is already set; skipping missing-detector check\n";
+}
+
+// 3) If detector model env exists and file is valid, compare should still fail quickly for missing embedder model.
+if ($detectorEnv !== false && trim($detectorEnv) !== '' && is_file($detectorEnv)) {
+    $missingEmbedder = __DIR__ . '/../missing_model.onnx';
+    $start = microtime(true);
+    try {
+        deepface_compare('a', 'b', $missingEmbedder, 0.5);
+        fail('Expected missing embedder model error was not thrown.');
+    } catch (Throwable $e) {
+        $elapsed = microtime(true) - $start;
+        if ($elapsed > 5.0) {
+            fail("deepface_compare took too long before embedder-model failure ({$elapsed}s).");
+        }
+        if (stripos($e->getMessage(), 'missing_model.onnx') === false && stripos($e->getMessage(), 'does not exist') === false) {
+            fail("Unexpected embedder-model error: {$e->getMessage()}");
+        }
+        echo "SMOKE_OK: compare failed fast for missing embedder model in " . round($elapsed, 3) . "s\n";
+        echo "SMOKE_OK: error={$e->getMessage()}\n";
+    }
 }

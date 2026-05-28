@@ -169,7 +169,7 @@ fn ensure_ort_runtime_initialized() -> PhpResult<()> {
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty())
             .ok_or_else(|| {
-                "ORT_DYLIB_PATH is required and must point to a valid onnxruntime.dll when using dynamic ORT linking".to_string()
+                "ORT_DYLIB_PATH is required and must point to a valid ONNX Runtime shared library (for example, onnxruntime.dll or libonnxruntime.so) when using dynamic ORT linking".to_string()
             })?;
 
         let dylib_path = PathBuf::from(dylib_path);
@@ -1256,6 +1256,20 @@ fn add_diagnostics(
         .chain(candidates2.iter())
         .map(|c| c.detect_score)
         .fold(f32::INFINITY, |acc, v| acc.min(v));
+    let quality_face_size_min = candidates1
+        .iter()
+        .chain(candidates2.iter())
+        .map(|c| c.quality_metrics.face_size)
+        .fold(f32::INFINITY, |acc, v| acc.min(v));
+    let quality_sharpness_min = candidates1
+        .iter()
+        .chain(candidates2.iter())
+        .map(|c| c.quality_metrics.sharpness)
+        .fold(f32::INFINITY, |acc, v| acc.min(v));
+    let quality_geometry_all_passed = candidates1
+        .iter()
+        .chain(candidates2.iter())
+        .all(|c| c.quality_metrics.geometry_ok);
 
     response
         .insert("face_count_img1", detected_count_1 as i64)
@@ -1284,6 +1298,19 @@ fn add_diagnostics(
             .insert("detect_confidence_min", detect_confidence_min as f64)
             .map_err(|e| PhpException::default(e.to_string()))?;
     }
+    if quality_face_size_min.is_finite() {
+        response
+            .insert("quality_face_size_min", quality_face_size_min as f64)
+            .map_err(|e| PhpException::default(e.to_string()))?;
+    }
+    if quality_sharpness_min.is_finite() {
+        response
+            .insert("quality_sharpness_min", quality_sharpness_min as f64)
+            .map_err(|e| PhpException::default(e.to_string()))?;
+    }
+    response
+        .insert("quality_geometry_all_passed", quality_geometry_all_passed)
+        .map_err(|e| PhpException::default(e.to_string()))?;
 
     let mut reject_table = ZendHashTable::new();
     reject_table

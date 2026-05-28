@@ -5,6 +5,7 @@
 # Local toolchain/runtime cache
 /vendor/onnxruntime/
 /vendor/**/*.zip
+/vendor/**/*.tgz
 
 # IDEs
 .vscode/
