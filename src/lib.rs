@@ -30,9 +30,10 @@ const ALIGN_TEMPLATE_112: [Point2f; 5] = [
     Point2f { x: 70.7299, y: 92.2041 },
 ];
 
-const DEFAULT_DETECTOR_MODEL_FILENAMES: [&str; 3] = [
+const DEFAULT_DETECTOR_MODEL_FILENAMES: [&str; 4] = [
     "scrfd_10g_kps.onnx",
     "scrfd_10g_bnkps.onnx",
+    "scrfd_10g_gnkps.onnx",
     "scrfd_10g.onnx",
 ];
 const DEFAULT_EMBEDDER_MODEL_FILENAMES: [&str; 4] = [

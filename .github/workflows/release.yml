@@ -1,0 +1,256 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: "Publish GitHub release"
+        required: true
+        default: "false"
+        type: choice
+        options: ["false", "true"]
+permissions:
+  contents: write
+
+jobs:
+  build-bundles:
+    name: Build Bundle (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x64
+            ort_archive: onnxruntime-win-x64-1.24.4.zip
+            ort_url: https://github.com/microsoft/onnxruntime/releases/download/v1.24.4/onnxruntime-win-x64-1.24.4.zip
+            bundle_ext: zip
+          - os: ubuntu-latest
+            target: linux-x64
+            ort_archive: onnxruntime-linux-x64-1.24.4.tgz
+            ort_url: https://github.com/microsoft/onnxruntime/releases/download/v1.24.4/onnxruntime-linux-x64-1.24.4.tgz
+            bundle_ext: tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Setup PHP 8.3
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          coverage: none
+
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y php-dev pkg-config clang
+
+      - name: Build release extension
+        run: cargo build --release --locked
+
+      - name: Package bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          DETECTOR_MODEL_URL_VAR: ${{ vars.DETECTOR_MODEL_URL }}
+          DETECTOR_MODEL_URL_SECRET: ${{ secrets.DETECTOR_MODEL_URL }}
+          EMBEDDER_MODEL_URL_VAR: ${{ vars.EMBEDDER_MODEL_URL }}
+          EMBEDDER_MODEL_URL_SECRET: ${{ secrets.EMBEDDER_MODEL_URL }}
+          ORT_URL: ${{ matrix.ort_url }}
+          ORT_ARCHIVE: ${{ matrix.ort_archive }}
+          TARGET_NAME: ${{ matrix.target }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $bundleDir = Join-Path $PWD "dist/deepfacephp_ext-$env:TARGET_NAME"
+          New-Item -ItemType Directory -Force -Path $bundleDir | Out-Null
+
+          $extensionPath = Join-Path $PWD "target/release/deepfacephp_ext.dll"
+          if (-not (Test-Path $extensionPath)) {
+            $extensionPath = (Get-ChildItem "target/release/deps/deepfacephp_ext.dll" | Select-Object -First 1 -ExpandProperty FullName)
+          }
+          if (-not (Test-Path $extensionPath)) {
+            throw "Windows extension binary not found."
+          }
+          Copy-Item $extensionPath (Join-Path $bundleDir "deepfacephp_ext.dll") -Force
+
+          $ortWork = Join-Path $PWD "dist/ort"
+          New-Item -ItemType Directory -Force -Path $ortWork | Out-Null
+          $ortArchivePath = Join-Path $ortWork $env:ORT_ARCHIVE
+          Invoke-WebRequest -Uri $env:ORT_URL -OutFile $ortArchivePath
+          Expand-Archive -Path $ortArchivePath -DestinationPath $ortWork -Force
+          $ortDll = Get-ChildItem -Path $ortWork -Recurse -Filter onnxruntime.dll | Select-Object -First 1 -ExpandProperty FullName
+          if (-not $ortDll) {
+            throw "onnxruntime.dll not found in downloaded ONNX Runtime archive."
+          }
+          Copy-Item $ortDll (Join-Path $bundleDir "onnxruntime.dll") -Force
+
+          $detectorDest = Join-Path $bundleDir "scrfd_10g_kps.onnx"
+          $embedderDest = Join-Path $bundleDir "arcface.onnx"
+
+          if (Test-Path "models/scrfd_10g_kps.onnx") {
+            Copy-Item "models/scrfd_10g_kps.onnx" $detectorDest -Force
+          } else {
+            $detectorUrl = $env:DETECTOR_MODEL_URL_VAR
+            if ([string]::IsNullOrWhiteSpace($detectorUrl)) { $detectorUrl = $env:DETECTOR_MODEL_URL_SECRET }
+            if ([string]::IsNullOrWhiteSpace($detectorUrl)) {
+              throw "Detector model not found locally and DETECTOR_MODEL_URL is not set."
+            }
+            Invoke-WebRequest -Uri $detectorUrl -OutFile $detectorDest
+          }
+
+          if (Test-Path "models/arcface.onnx") {
+            Copy-Item "models/arcface.onnx" $embedderDest -Force
+          } else {
+            $embedderUrl = $env:EMBEDDER_MODEL_URL_VAR
+            if ([string]::IsNullOrWhiteSpace($embedderUrl)) { $embedderUrl = $env:EMBEDDER_MODEL_URL_SECRET }
+            if ([string]::IsNullOrWhiteSpace($embedderUrl)) {
+              throw "Embedder model not found locally and EMBEDDER_MODEL_URL is not set."
+            }
+            Invoke-WebRequest -Uri $embedderUrl -OutFile $embedderDest
+          }
+
+          Set-Content -Path (Join-Path $bundleDir "README-release.md") -Value @"
+          deepfacephp_ext release bundle (${env:TARGET_NAME})
+
+          Contents:
+          - deepfacephp_ext.dll
+          - onnxruntime.dll
+          - scrfd_10g_kps.onnx
+          - arcface.onnx
+
+          Usage:
+          php -n -d extension=.\deepfacephp_ext.dll .\your_script.php
+          Call deepface_compare with empty model_path to use bundled arcface:
+          deepface_compare(\$img1, \$img2, "", 0.45)
+          "@
+
+          $env:ORT_DYLIB_PATH = Join-Path $bundleDir "onnxruntime.dll"
+          $env:DEEPFACE_DETECTOR_MODEL_PATH = Join-Path $bundleDir "scrfd_10g_kps.onnx"
+          php -n -d "extension=$(Join-Path $bundleDir "deepfacephp_ext.dll")" "scripts/smoke_extension.php"
+
+          $archivePath = Join-Path $PWD "dist/deepfacephp_ext-$env:TARGET_NAME.zip"
+          if (Test-Path $archivePath) { Remove-Item $archivePath -Force }
+          Compress-Archive -Path (Join-Path $bundleDir "*") -DestinationPath $archivePath -Force
+
+      - name: Package bundle (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          DETECTOR_MODEL_URL_VAR: ${{ vars.DETECTOR_MODEL_URL }}
+          DETECTOR_MODEL_URL_SECRET: ${{ secrets.DETECTOR_MODEL_URL }}
+          EMBEDDER_MODEL_URL_VAR: ${{ vars.EMBEDDER_MODEL_URL }}
+          EMBEDDER_MODEL_URL_SECRET: ${{ secrets.EMBEDDER_MODEL_URL }}
+          ORT_URL: ${{ matrix.ort_url }}
+          ORT_ARCHIVE: ${{ matrix.ort_archive }}
+          TARGET_NAME: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+
+          bundle_dir="$PWD/dist/deepfacephp_ext-${TARGET_NAME}"
+          mkdir -p "$bundle_dir"
+
+          ext_path="$PWD/target/release/libdeepfacephp_ext.so"
+          if [[ ! -f "$ext_path" ]]; then
+            ext_path="$(ls -1 "$PWD"/target/release/deps/libdeepfacephp_ext.so | head -n 1 || true)"
+          fi
+          if [[ -z "$ext_path" || ! -f "$ext_path" ]]; then
+            echo "Linux extension binary not found." >&2
+            exit 1
+          fi
+          cp "$ext_path" "$bundle_dir/libdeepfacephp_ext.so"
+
+          ort_work="$PWD/dist/ort"
+          mkdir -p "$ort_work"
+          ort_archive_path="$ort_work/$ORT_ARCHIVE"
+          curl -fsSL -o "$ort_archive_path" "$ORT_URL"
+          tar -xzf "$ort_archive_path" -C "$ort_work"
+          ort_so="$(find "$ort_work" -type f -name 'libonnxruntime.so' | head -n 1 || true)"
+          if [[ -z "$ort_so" || ! -f "$ort_so" ]]; then
+            echo "libonnxruntime.so not found in downloaded ONNX Runtime archive." >&2
+            exit 1
+          fi
+          cp "$ort_so" "$bundle_dir/libonnxruntime.so"
+
+          if [[ -f "$PWD/models/scrfd_10g_kps.onnx" ]]; then
+            cp "$PWD/models/scrfd_10g_kps.onnx" "$bundle_dir/scrfd_10g_kps.onnx"
+          else
+            detector_url="${DETECTOR_MODEL_URL_VAR:-}"
+            if [[ -z "$detector_url" ]]; then detector_url="${DETECTOR_MODEL_URL_SECRET:-}"; fi
+            if [[ -z "$detector_url" ]]; then
+              echo "Detector model not found locally and DETECTOR_MODEL_URL is not set." >&2
+              exit 1
+            fi
+            curl -fsSL -o "$bundle_dir/scrfd_10g_kps.onnx" "$detector_url"
+          fi
+
+          if [[ -f "$PWD/models/arcface.onnx" ]]; then
+            cp "$PWD/models/arcface.onnx" "$bundle_dir/arcface.onnx"
+          else
+            embedder_url="${EMBEDDER_MODEL_URL_VAR:-}"
+            if [[ -z "$embedder_url" ]]; then embedder_url="${EMBEDDER_MODEL_URL_SECRET:-}"; fi
+            if [[ -z "$embedder_url" ]]; then
+              echo "Embedder model not found locally and EMBEDDER_MODEL_URL is not set." >&2
+              exit 1
+            fi
+            curl -fsSL -o "$bundle_dir/arcface.onnx" "$embedder_url"
+          fi
+
+          cat > "$bundle_dir/README-release.md" <<'EOF'
+          deepfacephp_ext release bundle (linux-x64)
+
+          Contents:
+          - libdeepfacephp_ext.so
+          - libonnxruntime.so
+          - scrfd_10g_kps.onnx
+          - arcface.onnx
+
+          Usage:
+          php -n -d extension=./libdeepfacephp_ext.so ./your_script.php
+          Call deepface_compare with empty model_path to use bundled arcface:
+          deepface_compare($img1, $img2, "", 0.45)
+          EOF
+
+          export ORT_DYLIB_PATH="$bundle_dir/libonnxruntime.so"
+          export DEEPFACE_DETECTOR_MODEL_PATH="$bundle_dir/scrfd_10g_kps.onnx"
+          php -n -d "extension=$bundle_dir/libdeepfacephp_ext.so" "$PWD/scripts/smoke_extension.php"
+
+          tar -czf "$PWD/dist/deepfacephp_ext-${TARGET_NAME}.tar.gz" -C "$PWD/dist" "deepfacephp_ext-${TARGET_NAME}"
+
+      - name: Upload release bundle artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepfacephp_ext-${{ matrix.target }}
+          path: |
+            dist/deepfacephp_ext-${{ matrix.target }}.${{ matrix.bundle_ext }}
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' || inputs.publish == 'true'
+    runs-on: ubuntu-latest
+    needs: build-bundles
+    steps:
+      - name: Download bundle artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: deepfacephp_ext-*
+          merge-multiple: true
+
+      - name: Create release and upload assets
+        uses: softprops/action-gh-release@v3
+        with:
+          files: |
+            dist/deepfacephp_ext-windows-x64.zip
+            dist/deepfacephp_ext-linux-x64.tar.gz
+          generate_release_notes: true

@@ -110,3 +110,24 @@ GitHub Actions workflow at `.github/workflows/ci.yml` runs:
 2. `cargo build`
 3. PHP smoke test with pinned ONNX Runtime shared library
 4. Runs on both `windows-latest` and `ubuntu-latest`
+
+## Release Bundles
+
+GitHub release workflow at `.github/workflows/release.yml` builds and publishes:
+
+- `deepfacephp_ext-windows-x64.zip`
+- `deepfacephp_ext-linux-x64.tar.gz`
+
+Each bundle contains:
+
+- extension binary (`deepfacephp_ext.dll` or `libdeepfacephp_ext.so`)
+- ONNX Runtime shared library (`onnxruntime.dll` or `libonnxruntime.so`)
+- detector model (`scrfd_10g_kps.onnx`)
+- embedder model (`arcface.onnx`)
+
+Model source priority in release workflow:
+
+1. `models/scrfd_10g_kps.onnx` and `models/arcface.onnx` in repo
+2. `DETECTOR_MODEL_URL` / `EMBEDDER_MODEL_URL` repository variable or secret
+
+Trigger release by pushing a tag like `v1.0.0`.
