@@ -6,6 +6,7 @@
 /vendor/onnxruntime/
 /vendor/**/*.zip
 /vendor/**/*.tgz
+/models/*.onnx
 
 # IDEs
 .vscode/
