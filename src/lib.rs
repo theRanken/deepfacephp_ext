@@ -1,8 +1,8 @@
 #![cfg_attr(windows, feature(abi_vectorcall))]
 
 use std::cmp::Ordering;
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use ext_php_rs::boxed::ZBox;
@@ -12,6 +12,10 @@ use image::{DynamicImage, GenericImageView, ImageBuffer, Pixel, Rgb, RgbImage};
 use nalgebra::{Matrix2, Matrix2xX, Vector2};
 use ndarray::Array4;
 use ort::{ep, inputs, session::Session, value::TensorRef};
+#[cfg(unix)]
+use std::ffi::CStr;
+#[cfg(windows)]
+use std::os::windows::ffi::OsStringExt;
 
 static DETECTOR_MODEL_CACHE: OnceLock<Mutex<HashMap<String, Arc<Mutex<Session>>>>> = OnceLock::new();
 static EMBEDDER_MODEL_CACHE: OnceLock<Mutex<HashMap<String, Arc<Mutex<Session>>>>> = OnceLock::new();
@@ -24,6 +28,18 @@ const ALIGN_TEMPLATE_112: [Point2f; 5] = [
     Point2f { x: 56.0252, y: 71.7366 },
     Point2f { x: 41.5493, y: 92.3655 },
     Point2f { x: 70.7299, y: 92.2041 },
+];
+
+const DEFAULT_DETECTOR_MODEL_FILENAMES: [&str; 3] = [
+    "scrfd_10g_kps.onnx",
+    "scrfd_10g_bnkps.onnx",
+    "scrfd_10g.onnx",
+];
+const DEFAULT_EMBEDDER_MODEL_FILENAMES: [&str; 4] = [
+    "arcface.onnx",
+    "w600k_r50.onnx",
+    "glintr100.onnx",
+    "insightface_arcface.onnx",
 ];
 
 #[derive(Clone, Debug)]
@@ -162,23 +178,285 @@ fn embedder_cache() -> &'static Mutex<HashMap<String, Arc<Mutex<Session>>>> {
     EMBEDDER_MODEL_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+fn env_non_empty(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+#[cfg(windows)]
+fn extension_module_path() -> Option<PathBuf> {
+    use windows_sys::Win32::Foundation::HMODULE;
+    use windows_sys::Win32::System::LibraryLoader::{
+        GetModuleFileNameW, GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+        GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+    };
+
+    let mut handle: HMODULE = std::ptr::null_mut();
+    let symbol_address = ensure_ort_runtime_initialized as *const () as usize as *const u16;
+    let flags = GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT;
+    let ok = unsafe { GetModuleHandleExW(flags, symbol_address, &mut handle as *mut HMODULE) };
+    if ok == 0 || handle.is_null() {
+        return None;
+    }
+
+    let mut buf = vec![0u16; 32768];
+    let len = unsafe { GetModuleFileNameW(handle, buf.as_mut_ptr(), buf.len() as u32) };
+    if len == 0 {
+        return None;
+    }
+    buf.truncate(len as usize);
+    Some(PathBuf::from(std::ffi::OsString::from_wide(&buf)))
+}
+
+#[cfg(unix)]
+fn extension_module_path() -> Option<PathBuf> {
+    let mut info: libc::Dl_info = unsafe { std::mem::zeroed() };
+    let symbol_address =
+        ensure_ort_runtime_initialized as *const () as usize as *const libc::c_void;
+    let found = unsafe { libc::dladdr(symbol_address, &mut info as *mut libc::Dl_info) };
+    if found == 0 || info.dli_fname.is_null() {
+        return None;
+    }
+
+    let path = unsafe { CStr::from_ptr(info.dli_fname) }
+        .to_string_lossy()
+        .into_owned();
+    Some(PathBuf::from(path))
+}
+
+#[cfg(not(any(windows, unix)))]
+fn extension_module_path() -> Option<PathBuf> {
+    None
+}
+
+fn push_unique_dir(dirs: &mut Vec<PathBuf>, seen: &mut HashSet<String>, dir: PathBuf) {
+    if !dir.is_dir() {
+        return;
+    }
+    let key = if cfg!(windows) {
+        dir.to_string_lossy().to_lowercase()
+    } else {
+        dir.to_string_lossy().to_string()
+    };
+    if seen.insert(key) {
+        dirs.push(dir);
+    }
+}
+
+fn candidate_base_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let mut seen = HashSet::new();
+
+    if let Some(module_path) = extension_module_path() {
+        if let Some(parent) = module_path.parent() {
+            push_unique_dir(&mut dirs, &mut seen, parent.to_path_buf());
+        }
+    }
+
+    if let Ok(cwd) = std::env::current_dir() {
+        push_unique_dir(&mut dirs, &mut seen, cwd);
+    }
+
+    dirs
+}
+
+fn find_file_by_name(root: &Path, file_name: &str, max_depth: usize) -> Option<PathBuf> {
+    if !root.is_dir() {
+        return None;
+    }
+
+    let mut stack = vec![(root.to_path_buf(), 0usize)];
+    while let Some((dir, depth)) = stack.pop() {
+        let entries = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                if let Some(name) = path.file_name() {
+                    if name.to_string_lossy().eq_ignore_ascii_case(file_name) {
+                        return Some(path);
+                    }
+                }
+            } else if depth < max_depth && path.is_dir() {
+                stack.push((path, depth + 1));
+            }
+        }
+    }
+
+    None
+}
+
+fn ort_library_filenames() -> &'static [&'static str] {
+    #[cfg(windows)]
+    {
+        &["onnxruntime.dll"]
+    }
+    #[cfg(target_os = "linux")]
+    {
+        &["libonnxruntime.so"]
+    }
+    #[cfg(target_os = "macos")]
+    {
+        &["libonnxruntime.dylib"]
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    {
+        &["onnxruntime"]
+    }
+}
+
+fn discover_ort_dylib_path() -> Option<PathBuf> {
+    for base in candidate_base_dirs() {
+        let direct_roots = [
+            base.clone(),
+            base.join("onnxruntime"),
+            base.join("vendor").join("onnxruntime"),
+        ];
+
+        for root in direct_roots {
+            for file_name in ort_library_filenames() {
+                let direct = root.join(file_name);
+                if direct.is_file() {
+                    return Some(direct);
+                }
+            }
+        }
+
+        let recursive_roots = [
+            base.join("onnxruntime"),
+            base.join("vendor").join("onnxruntime"),
+        ];
+        for root in recursive_roots {
+            for file_name in ort_library_filenames() {
+                if let Some(found) = find_file_by_name(&root, file_name, 3) {
+                    return Some(found);
+                }
+            }
+        }
+    }
+
+    None
+}
+
+fn resolve_detector_model_path() -> Result<String, String> {
+    if let Some(path) = env_non_empty("DEEPFACE_DETECTOR_MODEL_PATH") {
+        let file = PathBuf::from(&path);
+        if file.is_file() {
+            return Ok(path);
+        }
+        return Err(format!(
+            "DEEPFACE_DETECTOR_MODEL_PATH does not point to a file: {}",
+            file.display()
+        ));
+    }
+
+    for base in candidate_base_dirs() {
+        let direct_roots = [
+            base.clone(),
+            base.join("models"),
+            base.join("vendor").join("models"),
+            base.join("vendor").join("deepfacephp_ext").join("models"),
+        ];
+        for root in direct_roots {
+            for file_name in DEFAULT_DETECTOR_MODEL_FILENAMES {
+                let direct = root.join(file_name);
+                if direct.is_file() {
+                    return Ok(direct.to_string_lossy().to_string());
+                }
+            }
+        }
+
+        let recursive_roots = [
+            base.join("models"),
+            base.join("vendor").join("models"),
+            base.join("vendor").join("deepfacephp_ext").join("models"),
+        ];
+        for root in recursive_roots {
+            for file_name in DEFAULT_DETECTOR_MODEL_FILENAMES {
+                if let Some(found) = find_file_by_name(&root, file_name, 2) {
+                    return Ok(found.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    Err(
+        "DEEPFACE_DETECTOR_MODEL_PATH is required and must point to SCRFD 10G KPS ONNX model (or bundle one of: scrfd_10g_kps.onnx, scrfd_10g_bnkps.onnx, scrfd_10g.onnx near the extension)"
+            .to_string(),
+    )
+}
+
+fn resolve_embedder_model_path(model_path: &str) -> Result<String, String> {
+    let explicit = model_path.trim();
+    if !explicit.is_empty() {
+        let explicit_file = PathBuf::from(explicit);
+        if explicit_file.is_file() {
+            return Ok(explicit.to_string());
+        }
+        return Err(format!(
+            "Embedder model file does not exist: {}",
+            explicit_file.display()
+        ));
+    }
+
+    for base in candidate_base_dirs() {
+        let direct_roots = [
+            base.clone(),
+            base.join("models"),
+            base.join("vendor").join("models"),
+            base.join("vendor").join("deepfacephp_ext").join("models"),
+        ];
+        for root in direct_roots {
+            for file_name in DEFAULT_EMBEDDER_MODEL_FILENAMES {
+                let direct = root.join(file_name);
+                if direct.is_file() {
+                    return Ok(direct.to_string_lossy().to_string());
+                }
+            }
+        }
+
+        let recursive_roots = [
+            base.join("models"),
+            base.join("vendor").join("models"),
+            base.join("vendor").join("deepfacephp_ext").join("models"),
+        ];
+        for root in recursive_roots {
+            for file_name in DEFAULT_EMBEDDER_MODEL_FILENAMES {
+                if let Some(found) = find_file_by_name(&root, file_name, 2) {
+                    return Ok(found.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
+
+    Err(
+        "model_path is empty and no bundled embedder model was found (expected one of: arcface.onnx, w600k_r50.onnx, glintr100.onnx, insightface_arcface.onnx)"
+            .to_string(),
+    )
+}
+
 fn ensure_ort_runtime_initialized() -> PhpResult<()> {
     let init = ORT_RUNTIME_INIT.get_or_init(|| {
-        let dylib_path = std::env::var("ORT_DYLIB_PATH")
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
+        let dylib_path = env_non_empty("ORT_DYLIB_PATH")
+            .map(PathBuf::from)
+            .or_else(discover_ort_dylib_path)
             .ok_or_else(|| {
-                "ORT_DYLIB_PATH is required and must point to a valid ONNX Runtime shared library (for example, onnxruntime.dll or libonnxruntime.so) when using dynamic ORT linking".to_string()
+                "ORT_DYLIB_PATH is required (or bundle ONNX Runtime near the extension) and must point to a valid ONNX Runtime shared library (for example, onnxruntime.dll or libonnxruntime.so)".to_string()
             })?;
 
-        let dylib_path = PathBuf::from(dylib_path);
         if !dylib_path.is_file() {
             return Err(format!(
                 "ORT_DYLIB_PATH does not point to a file: {}",
                 dylib_path.display()
             ));
         }
+
+        std::env::set_var("ORT_DYLIB_PATH", dylib_path.to_string_lossy().to_string());
 
         let committed = ort::init_from(&dylib_path)
             .map_err(|e| format!("Failed to load ONNX Runtime from {}: {e}", dylib_path.display()))?
@@ -233,22 +511,7 @@ fn parse_env_u32(key: &str, default: u32) -> Result<u32, String> {
 
 fn load_runtime_config() -> PhpResult<&'static RuntimeConfig> {
     let cfg = RUNTIME_CONFIG.get_or_init(|| {
-        let detector_model_path = std::env::var("DEEPFACE_DETECTOR_MODEL_PATH")
-            .ok()
-            .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
-            .ok_or_else(|| {
-                "DEEPFACE_DETECTOR_MODEL_PATH is required and must point to SCRFD 10G KPS ONNX model"
-                    .to_string()
-            })?;
-
-        let detector_model_file = PathBuf::from(&detector_model_path);
-        if !detector_model_file.is_file() {
-            return Err(format!(
-                "DEEPFACE_DETECTOR_MODEL_PATH does not point to a file: {}",
-                detector_model_file.display()
-            ));
-        }
+        let detector_model_path = resolve_detector_model_path()?;
 
         let detector_input_size = parse_env_u32("DEEPFACE_DETECTOR_INPUT_SIZE", 640)?;
         if detector_input_size < 128 || detector_input_size % 32 != 0 {
@@ -1395,9 +1658,10 @@ pub fn deepface_compare(
     }
 
     let cfg = load_runtime_config()?;
+    let embedder_model_path = resolve_embedder_model_path(&model_path).map_err(PhpException::default)?;
 
     let detector = get_or_load_session(detector_cache(), &cfg.detector_model_path)?;
-    let embedder = get_or_load_session(embedder_cache(), &model_path)?;
+    let embedder = get_or_load_session(embedder_cache(), &embedder_model_path)?;
 
     let mut detector = detector
         .lock()

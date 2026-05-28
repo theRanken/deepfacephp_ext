@@ -29,23 +29,28 @@ try {
     }
 }
 
-// 2) If detector model env is not provided, compare should fail quickly on detector config.
+// 2) Compare path should fail quickly when required runtime assets are missing.
+//    In non-bundled mode, this is usually detector model config.
+//    In bundled mode, detector may resolve and then missing embedder path should fail.
 $detectorEnv = getenv('DEEPFACE_DETECTOR_MODEL_PATH');
 if ($detectorEnv === false || trim($detectorEnv) === '') {
     $start = microtime(true);
     try {
         deepface_compare('a', 'b', 'missing.onnx', 0.5);
-        fail('Expected missing detector config error was not thrown.');
+        fail('Expected fast-fail error for missing runtime assets was not thrown.');
     } catch (Throwable $e) {
         $elapsed = microtime(true) - $start;
         if ($elapsed > 5.0) {
             fail("deepface_compare took too long before detector-config failure ({$elapsed}s).");
         }
-        if (stripos($e->getMessage(), 'DEEPFACE_DETECTOR_MODEL_PATH') === false && stripos($e->getMessage(), 'detector') === false) {
-            fail("Unexpected detector-config error: {$e->getMessage()}");
+        $message = $e->getMessage();
+        $isDetectorError = stripos($message, 'DEEPFACE_DETECTOR_MODEL_PATH') !== false || stripos($message, 'detector') !== false;
+        $isEmbedderError = stripos($message, 'missing.onnx') !== false || stripos($message, 'Embedder model file does not exist') !== false;
+        if (!$isDetectorError && !$isEmbedderError) {
+            fail("Unexpected fast-fail error: {$message}");
         }
-        echo "SMOKE_OK: compare failed fast for detector config in " . round($elapsed, 3) . "s\n";
-        echo "SMOKE_OK: error={$e->getMessage()}\n";
+        echo "SMOKE_OK: compare failed fast for missing runtime assets in " . round($elapsed, 3) . "s\n";
+        echo "SMOKE_OK: error={$message}\n";
     }
 } else {
     echo "SMOKE_SKIP: DEEPFACE_DETECTOR_MODEL_PATH is already set; skipping missing-detector check\n";
