@@ -1,49 +1,49 @@
-# name: CI
+name: CI
 
-# on:
-#   push:
-#     branches:
-#       - main
-#       - master
-#   pull_request:
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
 
-# jobs:
-#   build-and-smoke:
-#     strategy:
-#       fail-fast: false
-#       matrix:
-#         os: [windows-latest, ubuntu-latest]
-#     runs-on: ${{ matrix.os }}
+jobs:
+  build-and-smoke:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
 
-#     steps:
-#       - name: Checkout
-#         uses: actions/checkout@v4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
-#       - name: Setup Rust nightly
-#         uses: dtolnay/rust-toolchain@nightly
+      - name: Setup Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
 
-#       - name: Setup PHP 8.3
-#         uses: shivammathur/setup-php@v2
-#         with:
-#           php-version: "8.3"
-#           coverage: none
+      - name: Setup PHP 8.3
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          coverage: none
 
-#       - name: Install Linux build deps
-#         if: runner.os == 'Linux'
-#         shell: bash
-#         run: |
-#           sudo apt-get update
-#           sudo apt-get install -y php-dev pkg-config clang
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y php-dev pkg-config clang
 
-#       - name: Run Windows build and smoke
-#         if: runner.os == 'Windows'
-#         shell: pwsh
-#         run: |
-#           ./scripts/dev-env.ps1
+      - name: Run Windows build and smoke
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./scripts/dev-env.ps1
 
-#       - name: Run Linux build and smoke
-#         if: runner.os == 'Linux'
-#         shell: bash
-#         run: |
-#           chmod +x ./scripts/dev-env.sh
-#           ./scripts/dev-env.sh
+      - name: Run Linux build and smoke
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          chmod +x ./scripts/dev-env.sh
+          ./scripts/dev-env.sh
