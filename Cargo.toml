@@ -1,5 +1,5 @@
 [package]
-name = "deepfacephp_ext"
+name = "php_deepface"
 version = "0.1.0"
 edition = "2021"
 

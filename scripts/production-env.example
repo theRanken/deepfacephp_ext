@@ -1,0 +1,23 @@
+# deepfacephp_ext production baseline
+# Copy to your deployment env file and adjust absolute paths.
+
+# Runtime
+ORT_DYLIB_PATH=/opt/deepface/libonnxruntime.so
+
+# Models
+DEEPFACE_DETECTOR_MODEL_PATH=/opt/deepface/models/scrfd_10g_gnkps.onnx
+DEEPFACE_EMBEDDER_MODEL_PATH=/opt/deepface/models/glintr100.onnx
+# If deepface_compare(..., model_path, ...) passes "", the extension will use
+# DEEPFACE_EMBEDDER_MODEL_PATH first, then bundled fallback names.
+
+# Detector + quality gates
+DEEPFACE_DETECT_CONFIDENCE=0.60
+DEEPFACE_DETECT_NMS_IOU=0.45
+DEEPFACE_MIN_FACE_SIZE=40
+DEEPFACE_MIN_SHARPNESS=8
+
+# Pair decision
+DEEPFACE_PAIR_MARGIN=0.02
+
+# Production default: disable verbose diagnostics
+DEEPFACE_DIAGNOSTICS=0

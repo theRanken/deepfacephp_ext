@@ -353,19 +353,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "deepfacephp_ext"
-version = "0.1.0"
-dependencies = [
- "ext-php-rs",
- "image",
- "libc",
- "nalgebra",
- "ndarray",
- "ort",
- "windows-sys 0.59.0",
-]
-
-[[package]]
 name = "deflate64"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1174,6 +1161,19 @@ name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
+
+[[package]]
+name = "php_deepface"
+version = "0.1.0"
+dependencies = [
+ "ext-php-rs",
+ "image",
+ "libc",
+ "nalgebra",
+ "ndarray",
+ "ort",
+ "windows-sys 0.59.0",
+]
 
 [[package]]
 name = "pin-project-lite"

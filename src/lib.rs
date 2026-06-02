@@ -36,7 +36,8 @@ const DEFAULT_DETECTOR_MODEL_FILENAMES: [&str; 4] = [
     "scrfd_10g_gnkps.onnx",
     "scrfd_10g.onnx",
 ];
-const DEFAULT_EMBEDDER_MODEL_FILENAMES: [&str; 4] = [
+const DEFAULT_EMBEDDER_MODEL_FILENAMES: [&str; 5] = [
+    "facenet.onnx",
     "arcface.onnx",
     "w600k_r50.onnx",
     "glintr100.onnx",
@@ -387,7 +388,7 @@ fn resolve_detector_model_path() -> Result<String, String> {
     }
 
     Err(
-        "DEEPFACE_DETECTOR_MODEL_PATH is required and must point to SCRFD 10G KPS ONNX model (or bundle one of: scrfd_10g_kps.onnx, scrfd_10g_bnkps.onnx, scrfd_10g.onnx near the extension)"
+        "DEEPFACE_DETECTOR_MODEL_PATH is required and must point to a supported SCRFD ONNX model (or bundle one of: scrfd_10g_kps.onnx, scrfd_10g_bnkps.onnx, scrfd_10g_gnkps.onnx, scrfd_10g.onnx near the extension)"
             .to_string(),
     )
 }
@@ -402,6 +403,17 @@ fn resolve_embedder_model_path(model_path: &str) -> Result<String, String> {
         return Err(format!(
             "Embedder model file does not exist: {}",
             explicit_file.display()
+        ));
+    }
+
+    if let Some(path) = env_non_empty("DEEPFACE_EMBEDDER_MODEL_PATH") {
+        let file = PathBuf::from(&path);
+        if file.is_file() {
+            return Ok(path);
+        }
+        return Err(format!(
+            "DEEPFACE_EMBEDDER_MODEL_PATH does not point to a file: {}",
+            file.display()
         ));
     }
 
@@ -436,7 +448,7 @@ fn resolve_embedder_model_path(model_path: &str) -> Result<String, String> {
     }
 
     Err(
-        "model_path is empty and no bundled embedder model was found (expected one of: arcface.onnx, w600k_r50.onnx, glintr100.onnx, insightface_arcface.onnx)"
+        "model_path is empty and no embedder model was resolved. Set DEEPFACE_EMBEDDER_MODEL_PATH or bundle one of: arcface.onnx, w600k_r50.onnx, glintr100.onnx, insightface_arcface.onnx"
             .to_string(),
     )
 }
@@ -1472,12 +1484,13 @@ fn compare_candidate_sets(
     pair_scores.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(Ordering::Equal));
 
     let (best_i, best_j, best_score) = pair_scores[0];
-    let second_best = if pair_scores.len() > 1 {
-        pair_scores[1].2
+    let (second_best, margin) = if pair_scores.len() > 1 {
+        let second = pair_scores[1].2;
+        (second, best_score - second)
     } else {
-        best_score
+        // Single-pair case: margin follows the compliance spec as top1.
+        (best_score, best_score)
     };
-    let margin = best_score - second_best;
 
     let threshold_ok = best_score >= threshold;
     let margin_ok = margin >= pair_margin;
@@ -1671,9 +1684,9 @@ pub fn deepface_compare(
         .lock()
         .map_err(|_| PhpException::default("Embedder session lock poisoned".to_string()))?;
 
-    let (candidates1, rejects1, detected_count_1) = detect_and_prepare_candidates(&img1_path, &mut detector, cfg)
+    let (candidates1, rejects1, _detected_count_1) = detect_and_prepare_candidates(&img1_path, &mut detector, cfg)
         .map_err(PhpException::default)?;
-    let (candidates2, rejects2, detected_count_2) = detect_and_prepare_candidates(&img2_path, &mut detector, cfg)
+    let (candidates2, rejects2, _detected_count_2) = detect_and_prepare_candidates(&img2_path, &mut detector, cfg)
         .map_err(PhpException::default)?;
 
     if candidates1.is_empty() || candidates2.is_empty() {
@@ -1707,8 +1720,8 @@ pub fn deepface_compare(
     add_diagnostics(
         &mut response,
         cfg,
-        detected_count_1,
-        detected_count_2,
+        candidates1.len(),
+        candidates2.len(),
         &candidates1,
         &candidates2,
         &decision,
