@@ -98,13 +98,13 @@ If `ORT_DYLIB_PATH` is already set and the extension is built.
 Windows:
 
 ```powershell
-php -n -d extension=.\target\debug\deps\deepfacephp_ext.dll .\scripts\smoke_extension.php
+php -n -d extension=.\target\debug\deps\php_deepface.dll .\scripts\smoke_extension.php
 ```
 
 Linux:
 
 ```bash
-php -n -d extension=./target/debug/deps/libdeepfacephp_ext.so ./scripts/smoke_extension.php
+php -n -d extension=./target/debug/deps/libphp_deepface.so ./scripts/smoke_extension.php
 ```
 
 ## Threshold Calibration From Folder
@@ -124,7 +124,7 @@ model_testing/
 Run calibration:
 
 ```powershell
-php -n -d extension=.\target\debug\deps\deepfacephp_ext.dll .\scripts\calibrate_threshold.php `
+php -n -d extension=.\target\debug\deps\php_deepface.dll .\scripts\calibrate_threshold.php `
   --dataset "C:/Users/ranke/OneDrive/Pictures/model_testing" `
   --model "C:/Users/ranke/deepfacephp_ext/models/glintr100.onnx" `
   --max-positive-per-id 20 `
@@ -205,7 +205,7 @@ GitHub release workflow at `.github/workflows/release.yml` builds and publishes:
 
 Each bundle contains:
 
-- extension binary (`deepfacephp_ext.dll` or `libdeepfacephp_ext.so`)
+- extension binary (`php_deepface.dll` or `libphp_deepface.so`)
 - ONNX Runtime shared library (`onnxruntime.dll` or `libonnxruntime.so`)
 - release-specific usage notes (`README-release.md`)
 

@@ -14,7 +14,6 @@ $ortDir = Join-Path $repoRoot "vendor\onnxruntime"
 $ortArchive = Join-Path $ortDir "onnxruntime-win-x64-$ortVersion.zip"
 $ortExtractRoot = Join-Path $ortDir "onnxruntime-win-x64-$ortVersion"
 $ortDll = Join-Path $ortExtractRoot "onnxruntime-win-x64-$ortVersion\lib\onnxruntime.dll"
-$extensionDll = Join-Path $repoRoot "target\debug\deps\deepfacephp_ext.dll"
 
 if ($DownloadOrt -and -not (Test-Path $ortDll)) {
     New-Item -ItemType Directory -Force -Path $ortDir | Out-Null
@@ -58,11 +57,15 @@ try {
     }
 
     if ($RunSmoke) {
-        if (-not (Test-Path $extensionDll)) {
-            throw "Extension DLL not found at: $extensionDll"
+        $extensionCandidates = @()
+        $extensionCandidates += Get-ChildItem -Path (Join-Path $repoRoot "target\debug\*deepface*.dll") -File -ErrorAction SilentlyContinue
+        $extensionCandidates += Get-ChildItem -Path (Join-Path $repoRoot "target\debug\deps\*deepface*.dll") -File -ErrorAction SilentlyContinue
+        $extensionDll = $extensionCandidates | Select-Object -First 1
+        if (-not $extensionDll) {
+            throw "Extension DLL not found in target\debug or target\debug\deps."
         }
 
-        php -n -d "extension=$extensionDll" "scripts/smoke_extension.php"
+        php -n -d "extension=$($extensionDll.FullName)" "scripts/smoke_extension.php"
         if ($LASTEXITCODE -ne 0) {
             throw "smoke_extension.php failed."
         }

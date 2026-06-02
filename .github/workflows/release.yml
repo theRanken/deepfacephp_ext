@@ -69,7 +69,7 @@ jobs:
           if (-not $extensionArtifact) {
             throw "Windows extension binary not found."
           }
-          Copy-Item $extensionArtifact.FullName (Join-Path $bundleDir "deepfacephp_ext.dll") -Force
+          Copy-Item $extensionArtifact.FullName (Join-Path $bundleDir "php_deepface.dll") -Force
 
           $ortWork = Join-Path $PWD "dist/ort"
           New-Item -ItemType Directory -Force -Path $ortWork | Out-Null
@@ -86,13 +86,13 @@ jobs:
           deepfacephp_ext release bundle (${env:TARGET_NAME})
 
           Contents:
-          - deepfacephp_ext.dll
+          - php_deepface.dll
           - onnxruntime.dll
 
           Models are not bundled.
 
           Usage:
-          php -n -d extension=.\deepfacephp_ext.dll .\your_script.php
+          php -n -d extension=.\php_deepface.dll .\your_script.php
           Set ORT_DYLIB_PATH to .\onnxruntime.dll
           Set DEEPFACE_DETECTOR_MODEL_PATH to your licensed detector model
           Set DEEPFACE_EMBEDDER_MODEL_PATH to your licensed embedder model, or pass it explicitly to deepface_compare(\$img1, \$img2, \$modelPath, 0.45)
@@ -100,7 +100,7 @@ jobs:
 
           $env:ORT_DYLIB_PATH = Join-Path $bundleDir "onnxruntime.dll"
           $env:DEEPFACE_DIAGNOSTICS = "0"
-          $extensionPath = Join-Path $bundleDir "deepfacephp_ext.dll"
+          $extensionPath = Join-Path $bundleDir "php_deepface.dll"
           php -n -d "extension=$extensionPath" "scripts/smoke_extension.php"
 
           $archivePath = Join-Path $PWD "dist/deepfacephp_ext-$env:TARGET_NAME.zip"
@@ -131,7 +131,7 @@ jobs:
             echo "Linux extension binary not found." >&2
             exit 1
           fi
-          cp "$ext_path" "$bundle_dir/libdeepfacephp_ext.so"
+          cp "$ext_path" "$bundle_dir/libphp_deepface.so"
 
           ort_work="$PWD/dist/ort"
           mkdir -p "$ort_work"
@@ -149,13 +149,13 @@ jobs:
           deepfacephp_ext release bundle (linux-x64)
 
           Contents:
-          - libdeepfacephp_ext.so
+          - libphp_deepface.so
           - libonnxruntime.so
 
           Models are not bundled.
 
           Usage:
-          php -n -d extension=./libdeepfacephp_ext.so ./your_script.php
+          php -n -d extension=./libphp_deepface.so ./your_script.php
           export ORT_DYLIB_PATH=./libonnxruntime.so
           export DEEPFACE_DETECTOR_MODEL_PATH=/absolute/path/to/your/licensed/detector.onnx
           export DEEPFACE_EMBEDDER_MODEL_PATH=/absolute/path/to/your/licensed/embedder.onnx
@@ -164,7 +164,7 @@ jobs:
 
           export ORT_DYLIB_PATH="$bundle_dir/libonnxruntime.so"
           export DEEPFACE_DIAGNOSTICS=0
-          php -n -d "extension=$bundle_dir/libdeepfacephp_ext.so" "$PWD/scripts/smoke_extension.php"
+          php -n -d "extension=$bundle_dir/libphp_deepface.so" "$PWD/scripts/smoke_extension.php"
 
           tar -czf "$PWD/dist/deepfacephp_ext-${TARGET_NAME}.tar.gz" -C "$PWD/dist" "deepfacephp_ext-${TARGET_NAME}"
 

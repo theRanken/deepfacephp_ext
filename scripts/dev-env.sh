@@ -48,9 +48,15 @@ if [[ "${RUN_BUILD}" == "1" ]]; then
 fi
 
 if [[ "${RUN_SMOKE}" == "1" ]]; then
-  EXTENSION_SO="$(ls -1 "${REPO_ROOT}"/target/debug/deps/*deepfacephp_ext*.so | head -n 1 || true)"
+  EXTENSION_SO=""
+  for search_dir in "${REPO_ROOT}/target/debug" "${REPO_ROOT}/target/debug/deps"; do
+    EXTENSION_SO="$(find "${search_dir}" -maxdepth 1 -type f -name '*deepface*.so' | sort | head -n 1 || true)"
+    if [[ -n "${EXTENSION_SO}" ]]; then
+      break
+    fi
+  done
   if [[ -z "${EXTENSION_SO}" || ! -f "${EXTENSION_SO}" ]]; then
-    echo "Extension .so not found in target/debug/deps" >&2
+    echo "Extension .so not found in target/debug or target/debug/deps" >&2
     exit 1
   fi
 
