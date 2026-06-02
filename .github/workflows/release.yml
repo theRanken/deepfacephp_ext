@@ -4,14 +4,6 @@ on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
-    inputs:
-      publish:
-        description: "Publish GitHub release"
-        required: true
-        default: "false"
-        type: choice
-        options: ["false", "true"]
 permissions:
   contents: write
 
@@ -108,7 +100,8 @@ jobs:
 
           $env:ORT_DYLIB_PATH = Join-Path $bundleDir "onnxruntime.dll"
           $env:DEEPFACE_DIAGNOSTICS = "0"
-          php -n -d "extension=$(Join-Path $bundleDir "deepfacephp_ext.dll")" "scripts/smoke_extension.php"
+          $extensionPath = Join-Path $bundleDir "deepfacephp_ext.dll"
+          php -n -d "extension=$extensionPath" "scripts/smoke_extension.php"
 
           $archivePath = Join-Path $PWD "dist/deepfacephp_ext-$env:TARGET_NAME.zip"
           if (Test-Path $archivePath) { Remove-Item $archivePath -Force }
@@ -185,7 +178,7 @@ jobs:
 
   publish-release:
     name: Publish GitHub Release
-    if: github.event_name == 'push' || inputs.publish == 'true'
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     needs: build-bundles
     steps:
@@ -199,6 +192,7 @@ jobs:
       - name: Create release and upload assets
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ github.ref_name }}
           files: |
             dist/deepfacephp_ext-windows-x64.zip
             dist/deepfacephp_ext-linux-x64.tar.gz
