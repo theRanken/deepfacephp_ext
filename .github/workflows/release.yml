@@ -138,12 +138,12 @@ jobs:
           ort_archive_path="$ort_work/$ORT_ARCHIVE"
           curl -fsSL -o "$ort_archive_path" "$ORT_URL"
           tar -xzf "$ort_archive_path" -C "$ort_work"
-          ort_so="$(find "$ort_work" -type f -name 'libonnxruntime.so' | head -n 1 || true)"
-          if [[ -z "$ort_so" || ! -f "$ort_so" ]]; then
+          ort_so="$(find "$ort_work" \( -type f -o -type l \) \( -name 'libonnxruntime.so' -o -name 'libonnxruntime.so.*' \) | sort | head -n 1 || true)"
+          if [[ -z "$ort_so" || ! -e "$ort_so" ]]; then
             echo "libonnxruntime.so not found in downloaded ONNX Runtime archive." >&2
             exit 1
           fi
-          cp "$ort_so" "$bundle_dir/libonnxruntime.so"
+          cp -L "$ort_so" "$bundle_dir/libonnxruntime.so"
 
           cat > "$bundle_dir/README-release.md" <<'EOF'
           deepfacephp_ext release bundle (linux-x64)
